@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Arquitectura — Walkthrough 3D</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; overflow: hidden; width: 100vw; height: 100vh; font-family: sans-serif; }
+
+  #renderCanvas {
+    width: 100%; height: 100%;
+    display: block;
+    cursor: grab;
+  }
+
+  #renderCanvas.dblcursor { cursor: crosshair; }
+
+  /* Icono de destino al hacer doble click */
+  #moveIndicator {
+    position: fixed;
+    pointer-events: none;
+    z-index: 30;
+    display: none;
+    transform: translate(-50%, -50%);
+  }
+  @keyframes markerAppear {
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
+    60%  { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+    100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  }
+  @keyframes markerFade {
+    0%   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+  }
+
+  /* Crosshair central sutil */
+  #crosshair {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 16px; height: 16px;
+    pointer-events: none;
+    z-index: 20;
+    opacity: 0.5;
+  }
+  #crosshair::before, #crosshair::after {
+    content: ''; position: absolute; background: white;
+    border-radius: 2px;
+  }
+  #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
+  #crosshair::after  { height: 2px; width: 100%; top: 50%;  transform: translateY(-50%); }
+
+  /* Hint */
+  #hint {
+    position: fixed; bottom: 24px; left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 99px;
+    padding: 10px 24px;
+    color: rgba(255,255,255,0.75);
+    font-size: 13px;
+    pointer-events: none;
+    white-space: nowrap;
+    transition: opacity 1s;
+  }
+
+  /* Loading */
+  #loading {
+    position: fixed; inset: 0;
+    background: #111;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 100; gap: 20px;
+    transition: opacity 0.8s;
+  }
+  #loading h1 {
+    font-size: 32px; font-weight: 300;
+    letter-spacing: 0.3em; color: #fff;
+    text-transform: uppercase;
+  }
+  #loading p { color: rgba(255,255,255,0.4); font-size: 12px; letter-spacing: 0.15em; }
+  .bar-wrap { width: 220px; height: 2px; background: rgba(255,255,255,0.1); }
+  .bar-fill  { height: 100%; background: #fff; width: 0%; transition: width 0.3s; }
+  #enterBtn {
+    display: none; margin-top: 12px;
+    padding: 12px 44px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.35);
+    color: #fff; font-size: 12px;
+    letter-spacing: 0.2em; text-transform: uppercase;
+    cursor: pointer; transition: all 0.3s;
+  }
+  #enterBtn:hover { background: rgba(255,255,255,0.1); border-color: #fff; }
+</style>
+</head>
+<body>
+
+<canvas id="renderCanvas" tabindex="0"></canvas>
+<div id="crosshair"></div>
+
+<!-- Indicador visual al hacer doble click -->
+<div id="moveIndicator">
+  <svg width="52" height="52" viewBox="0 0 52 52">
+    <circle cx="26" cy="26" r="23" fill="rgba(30,120,255,0.88)" stroke="white" stroke-width="2"/>
+    <polygon points="26,12 38,35 26,29 14,35" fill="white"/>
+  </svg>
+</div>
+
+<div id="hint">Arrastrá para mirar &nbsp;·&nbsp; Doble click para avanzar &nbsp;·&nbsp; Rueda para zoom</div>
+
+<div id="loading">
+  <h1>Arquitectura</h1>
+  <div class="bar-wrap"><div class="bar-fill" id="barFill"></div></div>
+  <p id="loadingText">Cargando modelo...</p>
+  <button id="enterBtn" onclick="enterScene()">Entrar al espacio →</button>
+</div>
+
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+
+<script>
+const canvas  = document.getElementById('renderCanvas');
+const engine  = new BABYLON.Engine(canvas, true, { disableWebGL2Support: false }, true);
+engine.inputElement = canvas;
+const moveInd = document.getElementById('moveIndicator');
+
+let scene, camera, loaded = false;
+
+// Movimiento suave
+let isMoving = false, moveFrom = null, moveTo = null, moveProgress = 0;
+let MOVE_SPEED = 0.05;
+
+// ── CREAR ESCENA ─────────────────────────────────────────────
+const createScene = async () => {
+  scene = new BABYLON.Scene(engine);
+  scene.gravity = new BABYLON.Vector3(0, -0.5, 0);
+  scene.collisionsEnabled = true;
+  scene.clearColor = new BABYLON.Color4(0.13, 0.13, 0.14, 1);
+
+  // Cámara — sin inputs automáticos, los manejamos a mano
+  camera = new BABYLON.UniversalCamera('cam', new BABYLON.Vector3(0, 1.65, 0), scene);
+  camera.minZ = 0.05;
+  camera.maxZ = 300;
+  camera.fov  = 1.05;
+  camera.checkCollisions = true;
+  camera.applyGravity    = true;
+  camera.ellipsoid       = new BABYLON.Vector3(0.35, 0.82, 0.35);
+  camera.ellipsoidOffset = new BABYLON.Vector3(0, 0.82, 0);
+  camera.inputs.clear(); // eliminar todos los inputs de Babylon
+  // No adjuntamos controles automáticos — todo manual
+  camera.setTarget(new BABYLON.Vector3(1, 1.65, 0));
+
+  // Iluminación
+  const hemi = new BABYLON.HemisphericLight('h', new BABYLON.Vector3(0, 1, 0), scene);
+  hemi.intensity   = 1.6;
+  hemi.diffuse     = new BABYLON.Color3(1, 0.98, 0.94);
+  hemi.groundColor = new BABYLON.Color3(0.5, 0.5, 0.52);
+
+  const dir = new BABYLON.DirectionalLight('d', new BABYLON.Vector3(-0.5, -1, -0.5), scene);
+  dir.intensity = 0.5;
+
+  // ── CARGAR GLB ──────────────────────────────────────────────
+  updateProgress(20, 'Cargando modelo...');
+  const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
+
+  const result = await BABYLON.SceneLoader.ImportMeshAsync(
+    '', baseUrl, '12_5_2026.glb', scene,
+    evt => {
+      if (evt.lengthComputable)
+        updateProgress(20 + (evt.loaded / evt.total) * 65, 'Cargando modelo...');
+    }
+  );
+
+  updateProgress(90, 'Preparando...');
+
+  // Bounds y escala
+  let min = new BABYLON.Vector3( 9999,  9999,  9999);
+  let max = new BABYLON.Vector3(-9999, -9999, -9999);
+
+  result.meshes.forEach(m => {
+    m.checkCollisions = true;
+    if (!m.getBoundingInfo) return;
+    const bi = m.getBoundingInfo();
+    min = BABYLON.Vector3.Minimize(min, bi.boundingBox.minimumWorld);
+    max = BABYLON.Vector3.Maximize(max, bi.boundingBox.maximumWorld);
+  });
+
+  const center = BABYLON.Vector3.Center(min, max);
+  const size   = max.subtract(min);
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const scale  = maxDim > 0 ? 30 / maxDim : 1;
+
+  result.meshes.forEach(m => {
+    m.scaling  = new BABYLON.Vector3(scale, scale, scale);
+    m.position = m.position.subtract(center.scale(scale));
+  });
+
+  const floorY = min.y * scale - center.y * scale;
+  camera.position = new BABYLON.Vector3(0, floorY + 1.65, 0);
+  camera.setTarget(new BABYLON.Vector3(3, floorY + 1.65, 0));
+
+  updateProgress(100, '¡Listo!');
+  loaded = true;
+
+  setTimeout(() => {
+    document.getElementById('loadingText').textContent = 'Listo para explorar';
+    document.getElementById('enterBtn').style.display = 'block';
+  }, 300);
+
+  // Ocultar hint después de 5s
+  setTimeout(() => {
+    document.getElementById('hint').style.opacity = '0';
+  }, 6000);
+};
+
+function updateProgress(p, t) {
+  document.getElementById('barFill').style.width = p + '%';
+  document.getElementById('loadingText').textContent = t;
+}
+
+function enterScene() {
+  const l = document.getElementById('loading');
+  l.style.opacity = '0';
+  setTimeout(() => {
+    l.style.display = 'none';
+    canvas.focus();
+  }, 700);
+}
+
+function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
+
+// ── RENDER LOOP ───────────────────────────────────────────────
+engine.runRenderLoop(() => {
+  if (!scene) return;
+  if (isMoving && moveFrom && moveTo) {
+    moveProgress = Math.min(moveProgress + MOVE_SPEED, 1);
+    const e = easeInOut(moveProgress);
+    camera.position.x = BABYLON.Scalar.Lerp(moveFrom.x, moveTo.x, e);
+    camera.position.z = BABYLON.Scalar.Lerp(moveFrom.z, moveTo.z, e);
+    if (moveProgress >= 1) {
+      isMoving = false;
+      moveInd.style.animation = 'none';
+      void moveInd.offsetWidth;
+      moveInd.style.animation = 'markerFade 0.35s ease forwards';
+      setTimeout(() => { moveInd.style.display = 'none'; }, 350);
+    }
+  }
+  scene.render();
+});
+
+// ── AVANZAR (raycast al cursor, estilo Google Maps) ───────────
+function startMove(clientX, clientY) {
+  if (!loaded) return;
+
+  // Raycast exacto hacia donde apunta el cursor
+  const pick = scene.pick(clientX, clientY, null, false, camera);
+  let target;
+  if (pick && pick.hit && pick.pickedPoint) {
+    target = new BABYLON.Vector3(pick.pickedPoint.x, camera.position.y, pick.pickedPoint.z);
+  } else {
+    // Sin geometría: avanzar en la dirección de la cámara
+    const fwd = new BABYLON.Vector3(
+      Math.sin(camera.rotation.y), 0, Math.cos(camera.rotation.y)
+    ).normalize();
+    target = camera.position.add(fwd.scale(6));
+    target.y = camera.position.y;
+  }
+
+  const dist = BABYLON.Vector3.Distance(camera.position, target);
+  if (dist < 0.25) return;
+
+  // Duración ~0.5s para distancias cortas, hasta ~1s para largas
+  const travelTime = Math.min(1.0, 0.45 + dist * 0.025);
+  MOVE_SPEED = 1 / (travelTime * 60);
+
+  // Mostrar indicador en el punto de destino (posición del cursor)
+  moveInd.style.left = clientX + 'px';
+  moveInd.style.top  = clientY + 'px';
+  moveInd.style.display = 'block';
+  moveInd.style.animation = 'none';
+  void moveInd.offsetWidth;
+  moveInd.style.animation = 'markerAppear 0.25s ease forwards';
+
+  moveFrom     = camera.position.clone();
+  moveTo       = target;
+  moveProgress = 0;
+  isMoving     = true;
+}
+
+// ── DRAG PARA MIRAR (pointer events + capture) ───────────────
+let isDragging = false;
+let lastX = 0, lastY = 0;
+
+canvas.style.cursor = 'grab';
+
+canvas.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  isDragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+  canvas.style.cursor = 'grabbing';
+});
+
+canvas.addEventListener('pointermove', e => {
+  if (!isDragging || !loaded) return;
+  const dx = e.clientX - lastX;
+  const dy = e.clientY - lastY;
+  camera.rotation.y += dx * 0.004;
+  camera.rotation.x += dy * 0.004;
+  camera.rotation.x = Math.max(-1.4, Math.min(1.4, camera.rotation.x));
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+
+canvas.addEventListener('pointerup', e => {
+  isDragging = false;
+  canvas.releasePointerCapture(e.pointerId);
+  canvas.style.cursor = 'grab';
+});
+
+canvas.addEventListener('pointercancel', e => {
+  isDragging = false;
+  canvas.releasePointerCapture(e.pointerId);
+  canvas.style.cursor = 'grab';
+});
+
+// Doble click → avanzar
+canvas.addEventListener('dblclick', e => {
+  startMove(e.clientX, e.clientY);
+});
+
+// ── RUEDA DEL MOUSE (zoom por FOV) ────────────────────────────
+const FOV_MAX = 1.05;
+const FOV_MIN = 0.5;
+
+canvas.addEventListener('wheel', e => {
+  if (!loaded) return;
+  e.preventDefault();
+  camera.fov = Math.max(FOV_MIN, Math.min(FOV_MAX, camera.fov + Math.sign(e.deltaY) * 0.06));
+}, { passive: false });
+
+// ── TOUCH: swipe para mirar, doble tap para avanzar, pinch para zoom ──
+let lastTouchX = 0, lastTouchY = 0;
+let lastTapTime = 0;
+let pinchDist = 0;
+
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length === 2) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    pinchDist = Math.sqrt(dx*dx + dy*dy);
+    return;
+  }
+  lastTouchX = e.touches[0].clientX;
+  lastTouchY = e.touches[0].clientY;
+
+  // Doble tap
+  const now = Date.now();
+  if (now - lastTapTime < 300) {
+    startMove(e.touches[0].clientX, e.touches[0].clientY);
+  }
+  lastTapTime = now;
+}, { passive: true });
+
+canvas.addEventListener('touchmove', e => {
+  if (!loaded) return;
+  if (e.touches.length === 2) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const newDist = Math.sqrt(dx*dx + dy*dy);
+    camera.fov = Math.max(FOV_MIN, Math.min(FOV_MAX, camera.fov - (newDist - pinchDist) * 0.004));
+    pinchDist = newDist;
+    return;
+  }
+  const dx = e.touches[0].clientX - lastTouchX;
+  const dy = e.touches[0].clientY - lastTouchY;
+  camera.rotation.y += dx * 0.004;
+  camera.rotation.x += dy * 0.004;
+  camera.rotation.x = Math.max(-1.4, Math.min(1.4, camera.rotation.x));
+  lastTouchX = e.touches[0].clientX;
+  lastTouchY = e.touches[0].clientY;
+}, { passive: true });
+
+window.addEventListener('resize', () => engine.resize());
+
+createScene().catch(err => {
+  console.error(err);
+  document.getElementById('loadingText').textContent = 'Error al cargar el modelo.';
+});
+</script>
+</body>
+</html>
