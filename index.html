@@ -189,7 +189,10 @@
       content:''; position:absolute; left:-100%; top:0; width:100%; height:100%;
       background: var(--bronze); animation: slide 2.2s ease-in-out infinite;
     }
-    @keyframes slide { 0%{left:-100%} 100%{left:100%} }
+    @keyframes slide  { 0%{left:-100%} 100%{left:100%} }
+    @keyframes bounce   { 0%,100%{transform:translateY(0)} 50%{transform:translateY(7px)} }
+    @keyframes lineFlow { 0%{background-position:0 -100%;opacity:0} 15%{opacity:1} 85%{opacity:1} 100%{background-position:0 200%;opacity:0} }
+    @keyframes arrowFade{ 0%,20%{opacity:0;transform:rotate(45deg) translate(-3px,-3px)} 60%,75%{opacity:1;transform:rotate(45deg) translate(0,0)} 100%{opacity:0;transform:rotate(45deg) translate(3px,3px)} }
     .hero-desc {
       max-width: 240px; font-size: 13px; line-height: 1.75;
       color: var(--muted); text-align: right;
@@ -403,8 +406,34 @@
       .hbg { display: flex; }
 
       #hero { padding: 0 24px 28px; }
+      .hero-body { justify-content: center; padding-bottom: 0; }
       .hero-desc { display: none; }
       .hero-eyebrow { font-size: 9px; }
+
+      /* Scroll indicator mobile — línea fluida + punta de flecha */
+      .scroll-track { display: none; }
+      .scroll-cue {
+        flex-direction: column;
+        align-items: center;
+        font-size: 0; gap: 0;
+      }
+      .scroll-cue::before {
+        content: '';
+        display: block;
+        width: 1px; height: 54px;
+        background: linear-gradient(to bottom, transparent 0%, var(--bronze) 50%, transparent 100%);
+        background-size: 100% 200%;
+        animation: lineFlow 1.7s ease-in-out infinite;
+      }
+      .scroll-cue::after {
+        content: '';
+        display: block;
+        width: 8px; height: 8px;
+        border-right: 1px solid var(--bronze);
+        border-bottom: 1px solid var(--bronze);
+        margin-top: -2px;
+        animation: arrowFade 1.7s ease-in-out infinite;
+      }
 
       .sec { padding: 72px 24px; }
 
@@ -419,6 +448,7 @@
         aspect-ratio: 3/4;
       }
       /* Badge siempre visible en mobile para el card con 3D */
+      .card-badge { display: none; }
       .card .card-badge-mob {
         position: absolute; top: 18px; left: 18px;
         background: rgba(8,8,8,.72); backdrop-filter: blur(8px);
@@ -501,7 +531,6 @@
 
 <!-- PROJECTS -->
 <section id="projects">
-  <p class="label">Trabajos seleccionados</p>
   <div class="proj-head">
     <h2 class="rv">Proyectos</h2>
     <div class="rail-btns">
